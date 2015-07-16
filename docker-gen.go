@@ -24,6 +24,7 @@ var (
 	watch                   bool
 	notifyCmd               string
 	notifySigHUPContainerID string
+	restartContainerID      string
 	onlyExposed             bool
 	onlyPublished           bool
 	configFiles             stringslice
@@ -106,14 +107,15 @@ func (i *DockerImage) String() string {
 }
 
 type Config struct {
-	Template         string
-	Dest             string
-	Watch            bool
-	NotifyCmd        string
-	NotifyContainers map[string]docker.Signal
-	OnlyExposed      bool
-	OnlyPublished    bool
-	Interval         int
+	Template          string
+	Dest              string
+	Watch             bool
+	NotifyCmd         string
+	NotifyContainers  map[string]docker.Signal
+	RestartContainers map[string]struct{}
+	OnlyExposed       bool
+	OnlyPublished     bool
+	Interval          int
 }
 
 type ConfigFile struct {
@@ -212,6 +214,7 @@ func generateFromContainers(client *docker.Client) {
 		}
 		runNotifyCmd(config)
 		sendSignalToContainer(client, config)
+		restartContainers(client, config)
 	}
 }
 
@@ -242,6 +245,20 @@ func sendSignalToContainer(client *docker.Client, config Config) {
 		}
 		if err := client.KillContainer(killOpts); err != nil {
 			log.Printf("Error sending signal to container: %s", err)
+		}
+	}
+}
+
+func restartContainers(client *docker.Client, config Config) {
+	if len(config.RestartContainers) < 1 {
+		return
+	}
+
+	for container := range config.RestartContainers {
+		log.Printf("Restarting container '%s'", container)
+		// TODO: configurable timeout
+		if err := client.RestartContainer(container, 5); err != nil {
+			log.Printf("Error restarting container: %s", err)
 		}
 	}
 }
@@ -389,6 +406,8 @@ func initFlags() {
 	flag.StringVar(&notifyCmd, "notify", "", "run command after template is regenerated (e.g `restart xyz`)")
 	flag.StringVar(&notifySigHUPContainerID, "notify-sighup", "",
 		"send HUP signal to container.  Equivalent to `docker kill -s HUP container-ID`")
+	flag.StringVar(&restartContainerID, "restart-conatiner", "",
+		"restarts container. Equivalent to `docker restart container-ID`")
 	flag.Var(&configFiles, "config", "config files with template directives. Config files will be merged if this option is specified multiple times.")
 	flag.IntVar(&interval, "interval", 0, "notify command interval (secs)")
 	flag.StringVar(&endpoint, "endpoint", "", "docker api endpoint (tcp|unix://..). Default unix:///var/run/docker.sock")
@@ -423,17 +442,21 @@ func main() {
 		}
 	} else {
 		config := Config{
-			Template:         flag.Arg(0),
-			Dest:             flag.Arg(1),
-			Watch:            watch,
-			NotifyCmd:        notifyCmd,
-			NotifyContainers: make(map[string]docker.Signal),
-			OnlyExposed:      onlyExposed,
-			OnlyPublished:    onlyPublished,
-			Interval:         interval,
+			Template:          flag.Arg(0),
+			Dest:              flag.Arg(1),
+			Watch:             watch,
+			NotifyCmd:         notifyCmd,
+			NotifyContainers:  make(map[string]docker.Signal),
+			RestartContainers: make(map[string]struct{}),
+			OnlyExposed:       onlyExposed,
+			OnlyPublished:     onlyPublished,
+			Interval:          interval,
 		}
 		if notifySigHUPContainerID != "" {
 			config.NotifyContainers[notifySigHUPContainerID] = docker.SIGHUP
+		}
+		if restartContainerID != "" {
+			config.RestartContainers[restartContainerID] = struct{}{}
 		}
 		configs = ConfigFile{
 			Config: []Config{config}}
