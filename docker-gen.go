@@ -112,7 +112,7 @@ type Config struct {
 	Watch             bool
 	NotifyCmd         string
 	NotifyContainers  map[string]docker.Signal
-	RestartContainers map[string]struct{}
+	RestartContainers []string
 	OnlyExposed       bool
 	OnlyPublished     bool
 	Interval          int
@@ -254,7 +254,7 @@ func restartContainers(client *docker.Client, config Config) {
 		return
 	}
 
-	for container := range config.RestartContainers {
+	for _, container := range config.RestartContainers {
 		log.Printf("Restarting container '%s'", container)
 		// TODO: configurable timeout
 		if err := client.RestartContainer(container, 5); err != nil {
@@ -297,6 +297,7 @@ func generateAtInterval(client *docker.Client, configs ConfigFile) {
 					generateFile(configCopy, containers)
 					runNotifyCmd(configCopy)
 					sendSignalToContainer(client, configCopy)
+					restartContainers(client, configCopy)
 				case <-quit:
 					ticker.Stop()
 					return
@@ -406,7 +407,7 @@ func initFlags() {
 	flag.StringVar(&notifyCmd, "notify", "", "run command after template is regenerated (e.g `restart xyz`)")
 	flag.StringVar(&notifySigHUPContainerID, "notify-sighup", "",
 		"send HUP signal to container.  Equivalent to `docker kill -s HUP container-ID`")
-	flag.StringVar(&restartContainerID, "restart-conatiner", "",
+	flag.StringVar(&restartContainerID, "restart-container", "",
 		"restarts container. Equivalent to `docker restart container-ID`")
 	flag.Var(&configFiles, "config", "config files with template directives. Config files will be merged if this option is specified multiple times.")
 	flag.IntVar(&interval, "interval", 0, "notify command interval (secs)")
@@ -447,7 +448,7 @@ func main() {
 			Watch:             watch,
 			NotifyCmd:         notifyCmd,
 			NotifyContainers:  make(map[string]docker.Signal),
-			RestartContainers: make(map[string]struct{}),
+			RestartContainers: []string{},
 			OnlyExposed:       onlyExposed,
 			OnlyPublished:     onlyPublished,
 			Interval:          interval,
@@ -456,7 +457,7 @@ func main() {
 			config.NotifyContainers[notifySigHUPContainerID] = docker.SIGHUP
 		}
 		if restartContainerID != "" {
-			config.RestartContainers[restartContainerID] = struct{}{}
+			config.RestartContainers = append(config.RestartContainers, restartContainerID)
 		}
 		configs = ConfigFile{
 			Config: []Config{config}}
